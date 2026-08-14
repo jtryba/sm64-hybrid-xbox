@@ -36,7 +36,10 @@ static bool sXboxControllerInitialized = false;
 #define XBOX_RUMBLE_ON_STRENGTH 0xFFFF
 #define XBOX_RUMBLE_REFRESH_MS 100
 
-void controller_xbox_set_rumble(u8 enabled) {
+void controller_xbox_set_rumble(
+    u8 low_frequency_enabled,
+    u8 high_frequency_enabled
+) {
     if (
         !sXboxControllerInitialized ||
         sXboxController == NULL
@@ -44,22 +47,27 @@ void controller_xbox_set_rumble(u8 enabled) {
         return;
     }
 
-    const Uint16 strength =
-        enabled ? XBOX_RUMBLE_ON_STRENGTH : 0;
+    const Uint16 low_strength =
+        low_frequency_enabled ? XBOX_RUMBLE_ON_STRENGTH : 0;
+
+    const Uint16 high_strength =
+        high_frequency_enabled ? XBOX_RUMBLE_ON_STRENGTH : 0;
 
     const Uint32 duration =
-        enabled ? XBOX_RUMBLE_REFRESH_MS : 0;
+        (low_frequency_enabled || high_frequency_enabled)
+            ? XBOX_RUMBLE_REFRESH_MS
+            : 0;
 
     SDL_GameControllerRumble(
         sXboxController,
-        strength,
-        strength,
+        low_strength,
+        high_strength,
         duration
     );
 }
 
 static void controller_xbox_shutdown(void) {
-    controller_xbox_set_rumble(FALSE);
+    controller_xbox_set_rumble(FALSE, FALSE);
 }
 #endif
 
@@ -86,7 +94,7 @@ static inline bool xbox_trigger_pressed(
 static void controller_xbox_close_current(void) {
     if (sXboxController != NULL) {
 #ifdef ENABLE_RUMBLE
-        controller_xbox_set_rumble(FALSE);
+        controller_xbox_set_rumble(FALSE, FALSE);
 #endif
         SDL_GameControllerClose(
             sXboxController
@@ -234,7 +242,7 @@ static void controller_xbox_read(
         xpad_rtrig
     ) {
 #ifdef ENABLE_RUMBLE
-        controller_xbox_set_rumble(FALSE);
+        controller_xbox_set_rumble(FALSE, FALSE);
 #endif
         XReboot();
     }

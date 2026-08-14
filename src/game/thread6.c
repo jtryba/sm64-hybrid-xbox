@@ -295,14 +295,22 @@ s32 gRumblePakTimer;
 static struct RumbleData gRumbleDataQueue[3];
 static struct StructSH8031D9B0 gCurrRumbleSettings;
 
-extern void controller_xbox_set_rumble(u8 enabled);
+extern void controller_xbox_set_rumble(u8 low_frequency_enabled, u8 high_frequency_enabled);
 
-static void start_rumble(void) {
-    controller_xbox_set_rumble(TRUE);
+static void start_rumble_event(void) {
+    if (gCurrRumbleSettings.unk00 == 1) {
+        controller_xbox_set_rumble(TRUE, FALSE);
+    } else {
+        controller_xbox_set_rumble(FALSE, TRUE);
+    }
+}
+
+static void start_rumble_tail(void) {
+    controller_xbox_set_rumble(FALSE, TRUE);
 }
 
 static void stop_rumble(void) {
-    controller_xbox_set_rumble(FALSE);
+    controller_xbox_set_rumble(FALSE, FALSE);
 }
 
 static void update_rumble_pak(void) {
@@ -313,7 +321,7 @@ static void update_rumble_pak(void) {
 
     if (gCurrRumbleSettings.unk08 > 0) {
         gCurrRumbleSettings.unk08--;
-        start_rumble();
+        start_rumble_event();
     } else if (gCurrRumbleSettings.unk04 > 0) {
         gCurrRumbleSettings.unk04--;
 
@@ -323,10 +331,10 @@ static void update_rumble_pak(void) {
         }
 
         if (gCurrRumbleSettings.unk00 == 1) {
-            start_rumble();
+            start_rumble_event();
         } else if (gCurrRumbleSettings.unk06 >= 0x100) {
             gCurrRumbleSettings.unk06 -= 0x100;
-            start_rumble();
+            start_rumble_event();
         } else {
             gCurrRumbleSettings.unk06 +=
                 ((gCurrRumbleSettings.unk02 * gCurrRumbleSettings.unk02 * gCurrRumbleSettings.unk02) / (1 << 9)) + 4;
@@ -337,9 +345,9 @@ static void update_rumble_pak(void) {
         gCurrRumbleSettings.unk04 = 0;
 
         if (gCurrRumbleSettings.unk0A >= 5) {
-            start_rumble();
+            start_rumble_tail();
         } else if ((gCurrRumbleSettings.unk0A >= 2) && (gGlobalTimer % gCurrRumbleSettings.unk0C == 0)) {
-            start_rumble();
+            start_rumble_tail();
         } else {
             stop_rumble();
         }
