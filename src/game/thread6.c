@@ -286,4 +286,215 @@ void rumble_thread_update_vi(void) {
     osSendMesg(&gRumbleThreadVIMesgQueue, (OSMesg) 0x56525443, OS_MESG_NOBLOCK);
 }
 
+#elif defined(ENABLE_RUMBLE) && defined(TARGET_XBOX)
+
+static s8 D_SH_8030CCB4;
+static s32 sUnusedDisableRumble;
+s32 gRumblePakTimer;
+
+static struct RumbleData gRumbleDataQueue[3];
+static struct StructSH8031D9B0 gCurrRumbleSettings;
+
+extern void controller_xbox_set_rumble(u8 enabled);
+
+static void start_rumble(void) {
+    controller_xbox_set_rumble(TRUE);
+}
+
+static void stop_rumble(void) {
+    controller_xbox_set_rumble(FALSE);
+}
+
+static void update_rumble_pak(void) {
+    if (D_SH_8030CCB4 > 0) {
+        stop_rumble();
+        return;
+    }
+
+    if (gCurrRumbleSettings.unk08 > 0) {
+        gCurrRumbleSettings.unk08--;
+        start_rumble();
+    } else if (gCurrRumbleSettings.unk04 > 0) {
+        gCurrRumbleSettings.unk04--;
+
+        gCurrRumbleSettings.unk02 -= gCurrRumbleSettings.unk0E;
+        if (gCurrRumbleSettings.unk02 < 0) {
+            gCurrRumbleSettings.unk02 = 0;
+        }
+
+        if (gCurrRumbleSettings.unk00 == 1) {
+            start_rumble();
+        } else if (gCurrRumbleSettings.unk06 >= 0x100) {
+            gCurrRumbleSettings.unk06 -= 0x100;
+            start_rumble();
+        } else {
+            gCurrRumbleSettings.unk06 +=
+                ((gCurrRumbleSettings.unk02 * gCurrRumbleSettings.unk02 * gCurrRumbleSettings.unk02) / (1 << 9)) + 4;
+
+            stop_rumble();
+        }
+    } else {
+        gCurrRumbleSettings.unk04 = 0;
+
+        if (gCurrRumbleSettings.unk0A >= 5) {
+            start_rumble();
+        } else if ((gCurrRumbleSettings.unk0A >= 2) && (gGlobalTimer % gCurrRumbleSettings.unk0C == 0)) {
+            start_rumble();
+        } else {
+            stop_rumble();
+        }
+    }
+
+    if (gCurrRumbleSettings.unk0A > 0) {
+        gCurrRumbleSettings.unk0A--;
+    }
+}
+
+static void update_rumble_data_queue(void) {
+    if (gRumbleDataQueue[0].unk00) {
+        gCurrRumbleSettings.unk06 = 0;
+        gCurrRumbleSettings.unk08 = 4;
+        gCurrRumbleSettings.unk00 = gRumbleDataQueue[0].unk00;
+        gCurrRumbleSettings.unk04 = gRumbleDataQueue[0].unk02;
+        gCurrRumbleSettings.unk02 = gRumbleDataQueue[0].unk01;
+        gCurrRumbleSettings.unk0E = gRumbleDataQueue[0].unk04;
+    }
+
+    gRumbleDataQueue[0] = gRumbleDataQueue[1];
+    gRumbleDataQueue[1] = gRumbleDataQueue[2];
+
+    gRumbleDataQueue[2].unk00 = 0;
+}
+
+void queue_rumble_data(s16 a0, s16 a1) {
+    if (sUnusedDisableRumble) {
+        return;
+    }
+
+    if (a1 > 70) {
+        gRumbleDataQueue[2].unk00 = 1;
+    } else {
+        gRumbleDataQueue[2].unk00 = 2;
+    }
+
+    gRumbleDataQueue[2].unk01 = a1;
+    gRumbleDataQueue[2].unk02 = a0;
+    gRumbleDataQueue[2].unk04 = 0;
+}
+
+void func_sh_8024C89C(s16 a0) {
+    gRumbleDataQueue[2].unk04 = a0;
+}
+
+u8 is_rumble_finished_and_queue_empty(void) {
+    if (gCurrRumbleSettings.unk08 + gCurrRumbleSettings.unk04 >= 4) {
+        return FALSE;
+    }
+
+    if (gRumbleDataQueue[0].unk00 != 0) {
+        return FALSE;
+    }
+
+    if (gRumbleDataQueue[1].unk00 != 0) {
+        return FALSE;
+    }
+
+    if (gRumbleDataQueue[2].unk00 != 0) {
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
+void reset_rumble_timers(void) {
+    if (sUnusedDisableRumble) {
+        return;
+    }
+
+    if (gCurrRumbleSettings.unk0A == 0) {
+        gCurrRumbleSettings.unk0A = 7;
+    }
+
+    if (gCurrRumbleSettings.unk0A < 4) {
+        gCurrRumbleSettings.unk0A = 4;
+    }
+
+    gCurrRumbleSettings.unk0C = 7;
+}
+
+void reset_rumble_timers_2(s32 a0) {
+    if (sUnusedDisableRumble) {
+        return;
+    }
+
+    if (gCurrRumbleSettings.unk0A == 0) {
+        gCurrRumbleSettings.unk0A = 7;
+    }
+
+    if (gCurrRumbleSettings.unk0A < 4) {
+        gCurrRumbleSettings.unk0A = 4;
+    }
+
+    if (a0 == 4) {
+        gCurrRumbleSettings.unk0C = 1;
+    }
+
+    if (a0 == 3) {
+        gCurrRumbleSettings.unk0C = 2;
+    }
+
+    if (a0 == 2) {
+        gCurrRumbleSettings.unk0C = 3;
+    }
+
+    if (a0 == 1) {
+        gCurrRumbleSettings.unk0C = 4;
+    }
+
+    if (a0 == 0) {
+        gCurrRumbleSettings.unk0C = 5;
+    }
+}
+
+void func_sh_8024CA04(void) {
+    if (sUnusedDisableRumble) {
+        return;
+    }
+
+    gCurrRumbleSettings.unk0A = 4;
+    gCurrRumbleSettings.unk0C = 4;
+}
+
+void rumble_scheduler_tick(void) {
+    update_rumble_data_queue();
+    update_rumble_pak();
+
+    if (gRumblePakTimer > 0) {
+        gRumblePakTimer--;
+    }
+}
+
+void cancel_rumble(void) {
+    stop_rumble();
+
+    gRumbleDataQueue[0].unk00 = 0;
+    gRumbleDataQueue[1].unk00 = 0;
+    gRumbleDataQueue[2].unk00 = 0;
+
+    /*
+     * The original Shindou cancel path clears the queued/tail timers.
+     * The Xbox transport also clears the four-tick lead-in and pulse state
+     * so a disconnected/cancelled motor cannot restart on the next VBL.
+     */
+    gCurrRumbleSettings.unk00 = 0;
+    gCurrRumbleSettings.unk02 = 0;
+    gCurrRumbleSettings.unk04 = 0;
+    gCurrRumbleSettings.unk06 = 0;
+    gCurrRumbleSettings.unk08 = 0;
+    gCurrRumbleSettings.unk0A = 0;
+    gCurrRumbleSettings.unk0C = 0;
+    gCurrRumbleSettings.unk0E = 0;
+
+    gRumblePakTimer = 0;
+}
 #endif

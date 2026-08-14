@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <math.h>
+#include <stdlib.h>
 
 #include <hal/xbox.h>
 #include <SDL.h>
@@ -31,6 +32,37 @@ static SDL_GameController *sXboxController = NULL;
 static SDL_JoystickID sXboxControllerInstance = -1;
 static bool sXboxControllerInitialized = false;
 
+#ifdef ENABLE_RUMBLE
+#define XBOX_RUMBLE_ON_STRENGTH 0xFFFF
+#define XBOX_RUMBLE_REFRESH_MS 100
+
+void controller_xbox_set_rumble(u8 enabled) {
+    if (
+        !sXboxControllerInitialized ||
+        sXboxController == NULL
+    ) {
+        return;
+    }
+
+    const Uint16 strength =
+        enabled ? XBOX_RUMBLE_ON_STRENGTH : 0;
+
+    const Uint32 duration =
+        enabled ? XBOX_RUMBLE_REFRESH_MS : 0;
+
+    SDL_GameControllerRumble(
+        sXboxController,
+        strength,
+        strength,
+        duration
+    );
+}
+
+static void controller_xbox_shutdown(void) {
+    controller_xbox_set_rumble(FALSE);
+}
+#endif
+
 static inline bool xbox_button_pressed(
     SDL_GameController *pad,
     SDL_GameControllerButton button
@@ -53,6 +85,9 @@ static inline bool xbox_trigger_pressed(
 
 static void controller_xbox_close_current(void) {
     if (sXboxController != NULL) {
+#ifdef ENABLE_RUMBLE
+        controller_xbox_set_rumble(FALSE);
+#endif
         SDL_GameControllerClose(
             sXboxController
         );
@@ -143,6 +178,10 @@ static void controller_xbox_init(void) {
 
     sXboxControllerInitialized = true;
 
+#ifdef ENABLE_RUMBLE
+    atexit(controller_xbox_shutdown);
+#endif
+
     controller_xbox_open_first();
 }
 
@@ -194,6 +233,9 @@ static void controller_xbox_read(
         xpad_ltrig &&
         xpad_rtrig
     ) {
+#ifdef ENABLE_RUMBLE
+        controller_xbox_set_rumble(FALSE);
+#endif
         XReboot();
     }
 

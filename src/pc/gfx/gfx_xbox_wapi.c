@@ -16,6 +16,7 @@
 #include "gfx_window_manager_api.h"
 #include "gfx_xbox.h"
 #include "macros.h"
+#include "game/thread6.h"
 
 #ifdef VERSION_EU
 #define REFRESH_RATE REFRESH_50HZ
@@ -71,7 +72,13 @@ static void gfx_xbox_wapi_handle_events(void) {
 
 static bool gfx_xbox_wapi_start_frame(void) {
     pb_wait_for_vbl(); // comment this one out if porting 60fps patch
+#ifdef ENABLE_RUMBLE
+    rumble_scheduler_tick();
+#endif
     pb_wait_for_vbl();
+#ifdef ENABLE_RUMBLE
+    rumble_scheduler_tick();
+#endif
     pb_reset();
     pb_target_back_buffer();
     while (pb_busy());

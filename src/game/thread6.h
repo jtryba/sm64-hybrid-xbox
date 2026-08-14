@@ -1,6 +1,8 @@
 #ifndef THREAD6_H
 #define THREAD6_H
 
+#include "types.h"
+
 #ifdef VERSION_SH
 
 extern s32 gRumblePakTimer;
@@ -18,6 +20,19 @@ void cancel_rumble(void);
 void create_thread_6(void);
 void rumble_thread_update_vi(void);
 
-#endif // VERSION_SH
+#elif defined(ENABLE_RUMBLE) && defined(TARGET_XBOX)
+
+extern s32 gRumblePakTimer;
+
+void queue_rumble_data(s16 a0, s16 a1);
+void func_sh_8024C89C(s16 a0);
+u8 is_rumble_finished_and_queue_empty(void);
+void reset_rumble_timers(void);
+void reset_rumble_timers_2(s32 a0);
+void func_sh_8024CA04(void);
+void cancel_rumble(void);
+void rumble_scheduler_tick(void);
+
+#endif
 
 #endif // THREAD6_H
