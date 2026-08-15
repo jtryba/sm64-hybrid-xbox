@@ -69,6 +69,16 @@ static struct {
     uint32_t pool_pos;
 } gfx_texture_cache;
 
+#ifdef ENABLE_SHINDOU_TITLE_EASTER_EGG
+static const uint8_t *gfx_dynamic_texture_addr;
+static bool gfx_dynamic_texture_dirty;
+
+void gfx_mark_dynamic_texture(const void *addr) {
+    gfx_dynamic_texture_addr = (const uint8_t *) addr;
+    gfx_dynamic_texture_dirty = true;
+}
+#endif
+
 struct ColorCombiner {
     uint32_t cc_id;
     struct ShaderProgram *prg;
@@ -249,6 +259,12 @@ static bool gfx_texture_cache_lookup(int tile, struct TextureHashmapNode **n, co
         if ((*node)->texture_addr == orig_addr && (*node)->fmt == fmt && (*node)->siz == siz) {
             gfx_rapi->select_texture(tile, (*node)->texture_id);
             *n = *node;
+#ifdef ENABLE_SHINDOU_TITLE_EASTER_EGG
+            if (orig_addr == gfx_dynamic_texture_addr && gfx_dynamic_texture_dirty) {
+                gfx_dynamic_texture_dirty = false;
+                return false;
+            }
+#endif
             return true;
         }
         node = &(*node)->next;
@@ -273,6 +289,11 @@ static bool gfx_texture_cache_lookup(int tile, struct TextureHashmapNode **n, co
     (*node)->fmt = fmt;
     (*node)->siz = siz;
     *n = *node;
+#ifdef ENABLE_SHINDOU_TITLE_EASTER_EGG
+    if (orig_addr == gfx_dynamic_texture_addr) {
+        gfx_dynamic_texture_dirty = false;
+    }
+#endif
     return false;
 }
 

@@ -9,6 +9,12 @@
 #include "types.h"
 #include "prevent_bss_reordering.h"
 
+#ifdef ENABLE_SHINDOU_TITLE_EASTER_EGG
+#include "audio/external.h"
+#include "game/game_init.h"
+#include "pc/gfx/gfx_xbox.h"
+#endif
+
 // frame counts for the zoom in, hold, and zoom out of title model
 #define INTRO_STEPS_ZOOM_IN 20
 #define INTRO_STEPS_HOLD_1 75
@@ -247,3 +253,118 @@ Gfx *geo_game_over_tile(s32 sp40, struct GraphNode *sp44, UNUSED void *context) 
     }
     return displayList;
 }
+
+#ifdef ENABLE_SHINDOU_TITLE_EASTER_EGG
+
+extern Gfx title_screen_bg_shindou_face_begin_dl[];
+extern Gfx title_screen_bg_shindou_face_end_dl[];
+
+static s8 sShindouFaceVisible[] = {
+    1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 0, 0, 0, 0, 1, 1,
+    1, 1, 0, 0, 0, 0, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1,
+};
+
+static s8 sShindouFaceToggleOrder[] = {
+     0,  1,  2,  3,  4,  5,  6,  7,
+    15, 23, 31, 39, 47, 46, 45, 44,
+    43, 42, 41, 40, 32, 24, 16,  8,
+     9, 10, 11, 12, 13, 14, 22, 30,
+    38, 37, 36, 35, 34, 33, 25, 17,
+};
+
+static s8 sShindouFaceCounter;
+
+static void intro_gen_shindou_face_texrect(Gfx **displayListIter) {
+    s32 x;
+    s32 y;
+
+    for (y = 0; y < 6; ++y) {
+        for (x = 0; x < 8; ++x) {
+            if (sShindouFaceVisible[y * 8 + x] != 0) {
+                gSPTextureRectangle((*displayListIter)++, (x * 40) << 2, (y * 40) << 2,
+                                    (x * 40 + 39) << 2, (y * 40 + 39) << 2, 0,
+                                    0, 0, 4 << 10, 1 << 10);
+            }
+        }
+    }
+}
+
+static Gfx *intro_draw_shindou_face(u16 *image, s32 imageW, s32 imageH) {
+    Gfx *displayList;
+    Gfx *displayListIter;
+
+    displayList = alloc_display_list(110 * sizeof(*displayList));
+    if (displayList == NULL) {
+        return NULL;
+    }
+
+    displayListIter = displayList;
+
+    gSPDisplayList(displayListIter++, title_screen_bg_shindou_face_begin_dl);
+    gDPLoadTextureBlock(displayListIter++, image, G_IM_FMT_RGBA, G_IM_SIZ_16b, imageW, imageH, 0,
+                        G_TX_CLAMP | G_TX_NOMIRROR, G_TX_CLAMP | G_TX_NOMIRROR,
+                        6, 6, G_TX_NOLOD, G_TX_NOLOD);
+    intro_gen_shindou_face_texrect(&displayListIter);
+    gSPDisplayList(displayListIter++, title_screen_bg_shindou_face_end_dl);
+    gSPEndDisplayList(displayListIter);
+
+    return displayList;
+}
+
+static u16 *intro_sample_shindou_face_framebuffer(s32 imageW, s32 imageH, s32 sampleW, s32 sampleH) {
+    u16 *image;
+
+    image = alloc_display_list(imageW * imageH * sizeof(*image));
+    if (image == NULL) {
+        return NULL;
+    }
+
+    if (!gfx_xbox_capture_title_face_rgba16(image, imageW, imageH, sampleW, sampleH)) {
+        return NULL;
+    }
+
+    return image;
+}
+
+Gfx *geo_intro_face_easter_egg(s32 state, struct GraphNode *graphNode, UNUSED void *context) {
+    u16 *image;
+    Gfx *displayList;
+    s32 i;
+
+    displayList = NULL;
+
+    if (state != 1) {
+        for (i = 0; i < 48; ++i) {
+            sShindouFaceVisible[i] = 0;
+        }
+    } else {
+        if (sShindouFaceCounter == 0) {
+            if (gPlayer1Controller->buttonPressed & Z_TRIG) {
+                play_sound(SOUND_MENU_STAR_SOUND, gDefaultSoundArgs);
+                sShindouFaceVisible[0] ^= 1;
+                sShindouFaceCounter++;
+            }
+        } else {
+            sShindouFaceVisible[sShindouFaceToggleOrder[sShindouFaceCounter++]] ^= 1;
+            if (sShindouFaceCounter >= 40) {
+                sShindouFaceCounter = 0;
+            }
+        }
+
+        if (sShindouFaceVisible[0] == 1 || sShindouFaceVisible[17] == 1) {
+            image = intro_sample_shindou_face_framebuffer(40, 40, 2, 2);
+            if (image != NULL) {
+                graphNode->flags = (graphNode->flags & 0xFF) | 0x100;
+                displayList = intro_draw_shindou_face(image, 40, 40);
+            }
+        }
+    }
+
+    return displayList;
+}
+
+#endif

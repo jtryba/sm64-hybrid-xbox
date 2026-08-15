@@ -53,6 +53,9 @@ const GeoLayout intro_geo_00035C[] = {
          GEO_NODE_ORTHO(100),
          GEO_OPEN_NODE(),
             GEO_ASM(0, geo_intro_backdrop),
+#ifdef ENABLE_SHINDOU_TITLE_EASTER_EGG
+            GEO_ASM(0, geo_intro_face_easter_egg),
+#endif
          GEO_CLOSE_NODE(),
       GEO_CLOSE_NODE(),
       GEO_ZBUFFER(1),
@@ -75,6 +78,9 @@ const GeoLayout intro_geo_0003B8[] = {
          GEO_NODE_ORTHO(100),
          GEO_OPEN_NODE(),
             GEO_ASM(0, geo_game_over_tile),
+#ifdef ENABLE_SHINDOU_TITLE_EASTER_EGG
+            GEO_ASM(0, geo_intro_face_easter_egg),
+#endif
          GEO_CLOSE_NODE(),
       GEO_CLOSE_NODE(),
       GEO_ZBUFFER(1),
