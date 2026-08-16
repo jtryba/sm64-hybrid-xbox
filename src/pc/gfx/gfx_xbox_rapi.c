@@ -480,6 +480,7 @@ static uint32_t gfx_xbox_rapi_new_texture(void) {
     rst.last_tex = tex_pool + idx;
     rst.last_tex->data = NULL;
     rst.last_tex->addr = 0;
+    rst.last_tex->size = 0;
     rst.last_tex->wrap_u = XGU_WRAP;
     rst.last_tex->wrap_v = XGU_WRAP;
     rst.last_tex->filter = NV_TEX_FILTER_LINEAR;
@@ -514,18 +515,22 @@ static void gfx_xbox_rapi_upload_texture(const uint8_t *rgba32_buf, int width, i
     rst.last_tex->format = XGU_TEXTURE_FORMAT_A8B8G8R8_SWIZZLED;
 
     const uint32_t in_size = height * rst.last_tex->pitch;
+    const bool reuse_existing_allocation =
+        rst.last_tex->data != NULL && rst.last_tex->size == in_size;
 
-    if (tex_cache_ptr + in_size > tex_cache_end) {
-        debugPrint("gfx_xbox_rapi_upload_texture(%p, %d, %d): out of cache space!\n", rgba32_buf, width, height);
-        tex_cache_ptr = tex_cache; // whatever, just continue from start
+    if (!reuse_existing_allocation) {
+        if (tex_cache_ptr + in_size > tex_cache_end) {
+            debugPrint("gfx_xbox_rapi_upload_texture(%p, %d, %d): out of cache space!\n", rgba32_buf, width, height);
+            tex_cache_ptr = tex_cache; // whatever, just continue from start
+        }
+
+        rst.last_tex->data = tex_cache_ptr;
+        rst.last_tex->addr = (uint32_t)tex_cache_ptr & 0x03ffffff;
+        rst.last_tex->size = in_size;
+        tex_cache_ptr += in_size;
     }
 
-    rst.last_tex->data = tex_cache_ptr;
-    rst.last_tex->addr = (uint32_t)tex_cache_ptr & 0x03ffffff;
-
-    swizzle_rect(rgba32_buf, width, height, tex_cache_ptr, rst.last_tex->pitch, 4);
-
-    tex_cache_ptr += in_size;
+    swizzle_rect(rgba32_buf, width, height, rst.last_tex->data, rst.last_tex->pitch, 4);
 }
 
 static inline uint32_t cm_to_nv(const uint32_t val) {

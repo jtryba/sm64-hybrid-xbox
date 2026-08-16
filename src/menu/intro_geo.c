@@ -297,7 +297,7 @@ static Gfx *intro_draw_shindou_face(u16 *image, s32 imageW, s32 imageH) {
     Gfx *displayList;
     Gfx *displayListIter;
 
-    displayList = alloc_display_list(110 * sizeof(*displayList));
+    displayList = alloc_display_list(136 * sizeof(*displayList));
     if (displayList == NULL) {
         return NULL;
     }
