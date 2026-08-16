@@ -27,6 +27,19 @@
 int win_width;
 int win_height;
 
+/*
+ * R5 diagnostic-only frame timing counters. Millisecond resolution is
+ * sufficient to identify the large frame drops being investigated.
+ */
+uint32_t g_xbox_perf_vblank1_ms;
+uint32_t g_xbox_perf_vblank2_ms;
+uint32_t g_xbox_perf_vblank_wait_count;
+uint32_t g_xbox_perf_pace_elapsed_before_ms;
+uint32_t g_xbox_perf_start_busy_ms;
+uint32_t g_xbox_perf_swap_busy_ms;
+uint32_t g_xbox_perf_swap_finished_ms;
+uint32_t g_xbox_perf_title_capture_busy_ms;
+
 static void gfx_xbox_wapi_init(const char *game_name, bool start_in_fullscreen) {
     int status;
 
@@ -111,7 +124,11 @@ int gfx_xbox_capture_title_face_rgba16(uint16_t *image, int imageW, int imageH, 
      * gfx_xbox_wapi_start_frame() clears that surface for reuse, so it still
      * contains an older completed title image.
      */
-    while (pb_busy()) {
+    {
+        DWORD waitStart = GetTickCount();
+        while (pb_busy()) {
+        }
+        g_xbox_perf_title_capture_busy_ms += GetTickCount() - waitStart;
     }
 
     for (iy = 0; iy < imageH; ++iy) {
@@ -187,23 +204,94 @@ static void gfx_xbox_wapi_handle_events(void) {
 }
 
 static bool gfx_xbox_wapi_start_frame(void) {
-    pb_wait_for_vbl(); // comment this one out if porting 60fps patch
+    static DWORD lastPacedFrameStart;
+    DWORD waitStart;
+    DWORD now;
+    DWORD elapsed;
+    uint32_t waitsNeeded;
+
+    g_xbox_perf_vblank1_ms = 0;
+    g_xbox_perf_vblank2_ms = 0;
+    g_xbox_perf_vblank_wait_count = 0;
+    g_xbox_perf_pace_elapsed_before_ms = 0;
+    g_xbox_perf_start_busy_ms = 0;
+    g_xbox_perf_swap_busy_ms = 0;
+    g_xbox_perf_swap_finished_ms = 0;
+    g_xbox_perf_title_capture_busy_ms = 0;
+
+    /*
+     * R6-A diagnostic pacing:
+     *
+     * The old path always waited for two *future* VBlanks. If rendering had
+     * already consumed one refresh period, that added two more refreshes and
+     * quantized an otherwise slightly-late frame to roughly 50 ms (~20 FPS).
+     *
+     * Keep the original ~30 Hz cadence, but count refresh time already spent:
+     *   < 17 ms since the prior paced boundary: wait 2 VBlanks
+     *   17..33 ms:                         wait 1 VBlank
+     *   >= 34 ms:                          wait 0 and catch up
+     *
+     * This is diagnostic-only and deliberately leaves 720p, rendering, buffer
+     * swaps, and GPU synchronization unchanged.
+     */
+    now = GetTickCount();
+    if (lastPacedFrameStart == 0) {
+        elapsed = 0;
+        waitsNeeded = 2;
+    } else {
+        elapsed = now - lastPacedFrameStart;
+        if (elapsed < 17) {
+            waitsNeeded = 2;
+        } else if (elapsed < 34) {
+            waitsNeeded = 1;
+        } else {
+            waitsNeeded = 0;
+        }
+    }
+
+    g_xbox_perf_pace_elapsed_before_ms = elapsed;
+    g_xbox_perf_vblank_wait_count = waitsNeeded;
+
+    if (waitsNeeded >= 1) {
+        waitStart = GetTickCount();
+        pb_wait_for_vbl();
+        g_xbox_perf_vblank1_ms = GetTickCount() - waitStart;
 #ifdef ENABLE_RUMBLE
-    rumble_scheduler_tick();
+        rumble_scheduler_tick();
 #endif
-    pb_wait_for_vbl();
+    }
+
+    if (waitsNeeded >= 2) {
+        waitStart = GetTickCount();
+        pb_wait_for_vbl();
+        g_xbox_perf_vblank2_ms = GetTickCount() - waitStart;
 #ifdef ENABLE_RUMBLE
-    rumble_scheduler_tick();
+        rumble_scheduler_tick();
 #endif
+    }
+
+    lastPacedFrameStart = GetTickCount();
+
     pb_reset();
     pb_target_back_buffer();
+
+    waitStart = GetTickCount();
     while (pb_busy());
+    g_xbox_perf_start_busy_ms = GetTickCount() - waitStart;
+
     return true;
 }
 
 static void gfx_xbox_wapi_swap_buffers_begin(void) {
+    DWORD waitStart;
+
+    waitStart = GetTickCount();
     while (pb_busy());
+    g_xbox_perf_swap_busy_ms = GetTickCount() - waitStart;
+
+    waitStart = GetTickCount();
     while (pb_finished());
+    g_xbox_perf_swap_finished_ms = GetTickCount() - waitStart;
 }
 
 static void gfx_xbox_wapi_swap_buffers_end(void) {

@@ -48,6 +48,9 @@
 extern int win_width;
 extern int win_height;
 
+uint32_t g_xbox_perf_draw_finish_ms;
+uint32_t g_xbox_perf_draw_finish_count;
+
 typedef uint32_t *(*combiner_fn_t)(uint32_t *);
 
 struct CompiledShader {
@@ -202,7 +205,10 @@ static void resample_32bit(const uint32_t *in, const int inwidth, const int inhe
 }
 
 static inline void draw_finish(void) {
+    DWORD waitStart = GetTickCount();
     while (pb_busy());
+    g_xbox_perf_draw_finish_ms += GetTickCount() - waitStart;
+    g_xbox_perf_draw_finish_count++;
 }
 
 uint32_t* draw_set_texture_control0(uint32_t* p, unsigned int texture_index, bool enable, bool alphakill, uint16_t min_lod, uint16_t max_lod) {
@@ -676,6 +682,9 @@ static void gfx_xbox_rapi_on_resize(void) {
 }
 
 static void gfx_xbox_rapi_start_frame(void) {
+    g_xbox_perf_draw_finish_ms = 0;
+    g_xbox_perf_draw_finish_count = 0;
+
     uint32_t *cmd = pb_begin();
     cmd = xgu_clear_surface(cmd, XGU_CLEAR_Z | XGU_CLEAR_STENCIL | XGU_CLEAR_COLOR);
     pb_end(cmd);
