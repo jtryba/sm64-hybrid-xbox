@@ -42,7 +42,6 @@
 #define VTX_MAX_FLOATS 32
 #define VTX_STRIDE (VTX_MAX_FLOATS * sizeof(float))
 
-#define TEXCACHE_SIZE (512 * 64 * 32 * 4)
 #define VTXBUF_FLOATS (MAX_VERTS * VTX_MAX_FLOATS)
 
 extern int win_width;
@@ -132,9 +131,105 @@ static uint32_t num_shaders;
 static struct Texture tex_pool[MAX_TEXTURES];
 static uint32_t num_textures;
 
-static uint8_t *tex_cache = NULL;
-static uint8_t *tex_cache_ptr = NULL;
-static uint8_t *tex_cache_end = NULL;
+/*
+ * R8 physical texture lifetime candidate.
+ *
+ * Each logical Xbox Texture owns its backing contiguous allocation.
+ * Texture.size is the owned allocation capacity. A texture keeps that block
+ * while later uploads fit; it only grows when a larger image is required.
+ *
+ * This removes the R7 shared bump arena whose wrap could overwrite backing
+ * memory still referenced by older Texture objects.
+ */
+#define R8_PHYSTEX_TRACE_MAX_ROWS 16384u
+
+static FILE *r8_phystex_trace_fp;
+static uint32_t r8_phystex_trace_seq;
+static uint32_t r8_phystex_alloc_count;
+static uint32_t r8_phystex_grow_count;
+static uint32_t r8_phystex_reuse_count;
+static uint32_t r8_phystex_live_bytes;
+static uint32_t r8_phystex_highwater_bytes;
+
+static void r8_phystex_trace_open(void) {
+    if (r8_phystex_trace_fp != NULL) {
+        return;
+    }
+
+    r8_phystex_trace_fp = fopen("D:\\sm64_phystex_owned_r8.csv", "w");
+    if (r8_phystex_trace_fp != NULL) {
+        fprintf(r8_phystex_trace_fp,
+                "seq,event,texture_id,width,height,request_bytes,old_capacity,"
+                "new_capacity,phys_addr,live_bytes,highwater_bytes,"
+                "alloc_count,grow_count,reuse_count,num_textures\n");
+        fflush(r8_phystex_trace_fp);
+    }
+}
+
+static void r8_phystex_trace(const char *event, uint32_t texture_id,
+                             int width, int height, uint32_t request_bytes,
+                             uint32_t old_capacity, uint32_t new_capacity,
+                             uint32_t phys_addr) {
+    if (r8_phystex_trace_seq >= R8_PHYSTEX_TRACE_MAX_ROWS) {
+        return;
+    }
+
+    r8_phystex_trace_open();
+    if (r8_phystex_trace_fp == NULL) {
+        return;
+    }
+
+    fprintf(r8_phystex_trace_fp,
+            "%lu,%s,%lu,%d,%d,%lu,%lu,%lu,%08lx,%lu,%lu,%lu,%lu,%lu,%lu\n",
+            (unsigned long) r8_phystex_trace_seq,
+            event,
+            (unsigned long) texture_id,
+            width,
+            height,
+            (unsigned long) request_bytes,
+            (unsigned long) old_capacity,
+            (unsigned long) new_capacity,
+            (unsigned long) phys_addr,
+            (unsigned long) r8_phystex_live_bytes,
+            (unsigned long) r8_phystex_highwater_bytes,
+            (unsigned long) r8_phystex_alloc_count,
+            (unsigned long) r8_phystex_grow_count,
+            (unsigned long) r8_phystex_reuse_count,
+            (unsigned long) num_textures);
+    fflush(r8_phystex_trace_fp);
+    ++r8_phystex_trace_seq;
+}
+
+static void r8_phystex_fail_overlap(uint32_t texture_id) {
+    r8_phystex_trace("OWNED_OVERLAP_FATAL", texture_id, 0, 0, 0, 0, 0,
+                     tex_pool[texture_id].addr);
+    debugPrint("R8 physical texture allocator overlap invariant failed for texture %u\n",
+               texture_id);
+    pb_show_debug_screen();
+    while (1) Sleep(100);
+}
+
+static void r8_phystex_verify_no_overlap(uint32_t texture_id) {
+    const struct Texture *tex = &tex_pool[texture_id];
+    if (tex->data == NULL || tex->size == 0) {
+        return;
+    }
+
+    const uint32_t a0 = tex->addr;
+    const uint32_t a1 = a0 + tex->size;
+
+    for (uint32_t i = 0; i < num_textures; ++i) {
+        if (i == texture_id || tex_pool[i].data == NULL || tex_pool[i].size == 0) {
+            continue;
+        }
+
+        const uint32_t b0 = tex_pool[i].addr;
+        const uint32_t b1 = b0 + tex_pool[i].size;
+        if (a0 < b1 && b0 < a1) {
+            r8_phystex_fail_overlap(texture_id);
+        }
+    }
+}
 
 static float *vtx_buf;
 static float *vtx_buf_ptr;
@@ -521,19 +616,57 @@ static void gfx_xbox_rapi_upload_texture(const uint8_t *rgba32_buf, int width, i
     rst.last_tex->format = XGU_TEXTURE_FORMAT_A8B8G8R8_SWIZZLED;
 
     const uint32_t in_size = height * rst.last_tex->pitch;
-    const bool reuse_existing_allocation =
-        rst.last_tex->data != NULL && rst.last_tex->size == in_size;
+    const uint32_t texture_id = (uint32_t)(rst.last_tex - tex_pool);
+    const uint32_t old_capacity = rst.last_tex->size;
 
-    if (!reuse_existing_allocation) {
-        if (tex_cache_ptr + in_size > tex_cache_end) {
-            debugPrint("gfx_xbox_rapi_upload_texture(%p, %d, %d): out of cache space!\n", rgba32_buf, width, height);
-            tex_cache_ptr = tex_cache; // whatever, just continue from start
+    /*
+     * Keep one allocation per Texture object and treat Texture.size as its
+     * capacity. Shrinking or same-size uploads reuse the owned block.
+     * Growing allocates a new block first, then synchronizes before freeing
+     * the old block so no queued GPU draw can still reference freed storage.
+     */
+    if (rst.last_tex->data == NULL || old_capacity < in_size) {
+        uint8_t *new_data = (uint8_t *)MmAllocateContiguousMemoryEx(
+            in_size, 0, 0x03FFAFFF, 0, PAGE_WRITECOMBINE | PAGE_READWRITE);
+
+        if (new_data == NULL) {
+            debugPrint("R8: unable to allocate %u bytes for texture %u\n",
+                       in_size, texture_id);
+            pb_show_debug_screen();
+            while (1) Sleep(100);
         }
 
-        rst.last_tex->data = tex_cache_ptr;
-        rst.last_tex->addr = (uint32_t)tex_cache_ptr & 0x03ffffff;
+        if (rst.last_tex->data != NULL) {
+            draw_finish();
+            MmFreeContiguousMemory(rst.last_tex->data);
+            if (r8_phystex_live_bytes < old_capacity) {
+                debugPrint("R8: physical texture live-byte underflow\n");
+                pb_show_debug_screen();
+                while (1) Sleep(100);
+            }
+            r8_phystex_live_bytes -= old_capacity;
+            ++r8_phystex_grow_count;
+        } else {
+            ++r8_phystex_alloc_count;
+        }
+
+        rst.last_tex->data = new_data;
+        rst.last_tex->addr = (uint32_t)new_data & 0x03ffffff;
         rst.last_tex->size = in_size;
-        tex_cache_ptr += in_size;
+
+        r8_phystex_live_bytes += in_size;
+        if (r8_phystex_live_bytes > r8_phystex_highwater_bytes) {
+            r8_phystex_highwater_bytes = r8_phystex_live_bytes;
+        }
+
+        r8_phystex_verify_no_overlap(texture_id);
+        r8_phystex_trace(old_capacity == 0 ? "OWNED_ALLOC" : "OWNED_GROW",
+                         texture_id, width, height, in_size, old_capacity,
+                         rst.last_tex->size, rst.last_tex->addr);
+    } else {
+        ++r8_phystex_reuse_count;
+        r8_phystex_trace("OWNED_REUSE", texture_id, width, height, in_size,
+                         old_capacity, rst.last_tex->size, rst.last_tex->addr);
     }
 
     swizzle_rect(rgba32_buf, width, height, rst.last_tex->data, rst.last_tex->pitch, 4);
@@ -630,16 +763,6 @@ static void gfx_xbox_rapi_init(void) {
 
     vtx_buf_ptr = vtx_buf;
     vtx_buf_end = vtx_buf + VTXBUF_FLOATS;
-
-    tex_cache = (uint8_t *)MmAllocateContiguousMemoryEx(TEXCACHE_SIZE, 0, 0x03FFAFFF, 0, PAGE_WRITECOMBINE | PAGE_READWRITE);
-    if (!tex_cache) {
-        debugPrint("gfx_xbox_rapi_init: unable to alloc %u bytes for texture cache\n", TEXCACHE_SIZE);
-        pb_show_debug_screen();
-        while (1) Sleep(100);
-    }
-
-    tex_cache_ptr = tex_cache;
-    tex_cache_end = tex_cache + TEXCACHE_SIZE;
 
     uint32_t *cmd = pb_begin();
     cmd = xgu_set_transform_execution_mode(cmd, XGU_PROGRAM, XGU_RANGE_MODE_PRIVATE);
