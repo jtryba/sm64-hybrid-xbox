@@ -1,5 +1,6 @@
 #include <PR/ultratypes.h>
 
+#include "engine/graph_node.h"
 #include "game/memory.h"
 #include "game/segment2.h"
 #include "game/segment7.h"
@@ -336,6 +337,10 @@ Gfx *geo_intro_face_easter_egg(s32 state, struct GraphNode *graphNode, UNUSED vo
     s32 i;
 
     displayList = NULL;
+
+    if (state == GEO_CONTEXT_CREATE) {
+        sShindouFaceCounter = 0;
+    }
 
     if (state != 1) {
         for (i = 0; i < 48; ++i) {
