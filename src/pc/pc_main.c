@@ -1,9 +1,4 @@
 #include <stdlib.h>
-#include <stdio.h>
-
-#ifdef TARGET_XBOX
-#include <windows.h>
-#endif
 
 #ifdef TARGET_WEB
 #include <emscripten.h>
@@ -87,65 +82,12 @@ void send_display_list(struct SPTask *spTask) {
 
 static s16 audio_buffer[SAMPLES_HIGH * 2 * 2];
 
-#ifdef TARGET_XBOX
-extern uint32_t g_xbox_perf_vblank1_ms;
-extern uint32_t g_xbox_perf_vblank2_ms;
-extern uint32_t g_xbox_perf_vblank_wait_count;
-extern uint32_t g_xbox_perf_pace_elapsed_before_ms;
-extern uint32_t g_xbox_perf_start_busy_ms;
-extern uint32_t g_xbox_perf_swap_busy_ms;
-extern uint32_t g_xbox_perf_swap_finished_ms;
-extern uint32_t g_xbox_perf_title_capture_busy_ms;
-extern uint32_t g_xbox_perf_draw_finish_ms;
-extern uint32_t g_xbox_perf_draw_finish_count;
 
-static FILE *s_xbox_perf_log;
-static uint32_t s_xbox_perf_frame;
-
-static void xbox_perf_log_open(void) {
-    if (s_xbox_perf_log != NULL) {
-        return;
-    }
-
-    s_xbox_perf_log = fopen("D:\\sm64_perf.csv", "w");
-    if (s_xbox_perf_log == NULL) {
-        return;
-    }
-
-    setvbuf(s_xbox_perf_log, NULL, _IOFBF, 64 * 1024);
-    fprintf(s_xbox_perf_log,
-        "frame,total_ms,game_ms,audio_ms,gfx_end_ms,"
-        "vblank1_ms,vblank2_ms,vblank_wait_count,pace_elapsed_before_ms,"
-        "start_busy_ms,swap_busy_ms,swap_finished_ms,"
-        "draw_finish_ms,draw_finish_count,title_capture_busy_ms,"
-        "audio_before,audio_after,flush_frame\n");
-}
-#endif
 
 void produce_one_frame(void) {
-#ifdef TARGET_XBOX
-    DWORD perfFrameStart = GetTickCount();
-    DWORD perfGameStart;
-    DWORD perfGameEnd;
-    DWORD perfAudioEnd;
-    DWORD perfFrameEnd;
-    int perfAudioAfter;
-    int perfFlush = 0;
-
-    xbox_perf_log_open();
-#endif
-
     gfx_start_frame();
 
-#ifdef TARGET_XBOX
-    perfGameStart = GetTickCount();
-#endif
-
     game_loop_one_iteration();
-
-#ifdef TARGET_XBOX
-    perfGameEnd = GetTickCount();
-#endif
 
     int samples_left = audio_api->buffered();
     u32 num_audio_samples = samples_left < audio_api->get_desired_buffered() ? SAMPLES_HIGH : SAMPLES_LOW;
@@ -160,54 +102,7 @@ void produce_one_frame(void) {
     //printf("Audio samples before submitting: %d\n", audio_api->buffered());
     audio_api->play((u8 *)audio_buffer, 2 * num_audio_samples * 4);
 
-#ifdef TARGET_XBOX
-    perfAudioEnd = GetTickCount();
-#endif
-
     gfx_end_frame();
-
-#ifdef TARGET_XBOX
-    perfFrameEnd = GetTickCount();
-    perfAudioAfter = audio_api->buffered();
-
-    if (s_xbox_perf_log != NULL) {
-        /*
-         * Flush every 600 frames so abrupt resets do not lose the whole run.
-         * Mark the flush frame explicitly; its timing must not be interpreted
-         * as a renderer-originated stall.
-         */
-        perfFlush = ((s_xbox_perf_frame + 1) % 600) == 0;
-
-        fprintf(s_xbox_perf_log,
-            "%lu,%lu,%lu,%lu,%lu,"
-            "%lu,%lu,%lu,%lu,%lu,%lu,%lu,"
-            "%lu,%lu,%lu,%d,%d,%d\n",
-            (unsigned long)s_xbox_perf_frame,
-            (unsigned long)(perfFrameEnd - perfFrameStart),
-            (unsigned long)(perfGameEnd - perfGameStart),
-            (unsigned long)(perfAudioEnd - perfGameEnd),
-            (unsigned long)(perfFrameEnd - perfAudioEnd),
-            (unsigned long)g_xbox_perf_vblank1_ms,
-            (unsigned long)g_xbox_perf_vblank2_ms,
-            (unsigned long)g_xbox_perf_vblank_wait_count,
-            (unsigned long)g_xbox_perf_pace_elapsed_before_ms,
-            (unsigned long)g_xbox_perf_start_busy_ms,
-            (unsigned long)g_xbox_perf_swap_busy_ms,
-            (unsigned long)g_xbox_perf_swap_finished_ms,
-            (unsigned long)g_xbox_perf_draw_finish_ms,
-            (unsigned long)g_xbox_perf_draw_finish_count,
-            (unsigned long)g_xbox_perf_title_capture_busy_ms,
-            samples_left,
-            perfAudioAfter,
-            perfFlush);
-
-        if (perfFlush) {
-            fflush(s_xbox_perf_log);
-        }
-    }
-
-    s_xbox_perf_frame++;
-#endif
 }
 
 #ifdef TARGET_WEB

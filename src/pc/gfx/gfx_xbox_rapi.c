@@ -1,6 +1,5 @@
 #ifdef TARGET_XBOX
 
-#include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <assert.h>
@@ -46,9 +45,6 @@
 
 extern int win_width;
 extern int win_height;
-
-uint32_t g_xbox_perf_draw_finish_ms;
-uint32_t g_xbox_perf_draw_finish_count;
 
 typedef uint32_t *(*combiner_fn_t)(uint32_t *);
 
@@ -141,68 +137,13 @@ static uint32_t num_textures;
  * This removes the R7 shared bump arena whose wrap could overwrite backing
  * memory still referenced by older Texture objects.
  */
-#define R8_PHYSTEX_TRACE_MAX_ROWS 16384u
-
-static FILE *r8_phystex_trace_fp;
-static uint32_t r8_phystex_trace_seq;
-static uint32_t r8_phystex_alloc_count;
-static uint32_t r8_phystex_grow_count;
-static uint32_t r8_phystex_reuse_count;
+/*
+ * R8 physical texture lifetime safety remains active in release builds.
+ * Only diagnostic counters/trace emission are removed.
+ */
 static uint32_t r8_phystex_live_bytes;
-static uint32_t r8_phystex_highwater_bytes;
-
-static void r8_phystex_trace_open(void) {
-    if (r8_phystex_trace_fp != NULL) {
-        return;
-    }
-
-    r8_phystex_trace_fp = fopen("D:\\sm64_phystex_owned_r8.csv", "w");
-    if (r8_phystex_trace_fp != NULL) {
-        fprintf(r8_phystex_trace_fp,
-                "seq,event,texture_id,width,height,request_bytes,old_capacity,"
-                "new_capacity,phys_addr,live_bytes,highwater_bytes,"
-                "alloc_count,grow_count,reuse_count,num_textures\n");
-        fflush(r8_phystex_trace_fp);
-    }
-}
-
-static void r8_phystex_trace(const char *event, uint32_t texture_id,
-                             int width, int height, uint32_t request_bytes,
-                             uint32_t old_capacity, uint32_t new_capacity,
-                             uint32_t phys_addr) {
-    if (r8_phystex_trace_seq >= R8_PHYSTEX_TRACE_MAX_ROWS) {
-        return;
-    }
-
-    r8_phystex_trace_open();
-    if (r8_phystex_trace_fp == NULL) {
-        return;
-    }
-
-    fprintf(r8_phystex_trace_fp,
-            "%lu,%s,%lu,%d,%d,%lu,%lu,%lu,%08lx,%lu,%lu,%lu,%lu,%lu,%lu\n",
-            (unsigned long) r8_phystex_trace_seq,
-            event,
-            (unsigned long) texture_id,
-            width,
-            height,
-            (unsigned long) request_bytes,
-            (unsigned long) old_capacity,
-            (unsigned long) new_capacity,
-            (unsigned long) phys_addr,
-            (unsigned long) r8_phystex_live_bytes,
-            (unsigned long) r8_phystex_highwater_bytes,
-            (unsigned long) r8_phystex_alloc_count,
-            (unsigned long) r8_phystex_grow_count,
-            (unsigned long) r8_phystex_reuse_count,
-            (unsigned long) num_textures);
-    fflush(r8_phystex_trace_fp);
-    ++r8_phystex_trace_seq;
-}
 
 static void r8_phystex_fail_overlap(uint32_t texture_id) {
-    r8_phystex_trace("OWNED_OVERLAP_FATAL", texture_id, 0, 0, 0, 0, 0,
-                     tex_pool[texture_id].addr);
     debugPrint("R8 physical texture allocator overlap invariant failed for texture %u\n",
                texture_id);
     pb_show_debug_screen();
@@ -300,10 +241,7 @@ static void resample_32bit(const uint32_t *in, const int inwidth, const int inhe
 }
 
 static inline void draw_finish(void) {
-    DWORD waitStart = GetTickCount();
     while (pb_busy());
-    g_xbox_perf_draw_finish_ms += GetTickCount() - waitStart;
-    g_xbox_perf_draw_finish_count++;
 }
 
 uint32_t* draw_set_texture_control0(uint32_t* p, unsigned int texture_index, bool enable, bool alphakill, uint16_t min_lod, uint16_t max_lod) {
@@ -651,9 +589,6 @@ static void gfx_xbox_rapi_upload_texture(const uint8_t *rgba32_buf, int width, i
                 while (1) Sleep(100);
             }
             r8_phystex_live_bytes -= old_capacity;
-            ++r8_phystex_grow_count;
-        } else {
-            ++r8_phystex_alloc_count;
         }
 
         rst.last_tex->data = new_data;
@@ -661,18 +596,7 @@ static void gfx_xbox_rapi_upload_texture(const uint8_t *rgba32_buf, int width, i
         rst.last_tex->size = in_size;
 
         r8_phystex_live_bytes += in_size;
-        if (r8_phystex_live_bytes > r8_phystex_highwater_bytes) {
-            r8_phystex_highwater_bytes = r8_phystex_live_bytes;
-        }
-
         r8_phystex_verify_no_overlap(texture_id);
-        r8_phystex_trace(old_capacity == 0 ? "OWNED_ALLOC" : "OWNED_GROW",
-                         texture_id, width, height, in_size, old_capacity,
-                         rst.last_tex->size, rst.last_tex->addr);
-    } else {
-        ++r8_phystex_reuse_count;
-        r8_phystex_trace("OWNED_REUSE", texture_id, width, height, in_size,
-                         old_capacity, rst.last_tex->size, rst.last_tex->addr);
     }
 
     swizzle_rect(rgba32_buf, width, height, rst.last_tex->data, rst.last_tex->pitch, 4);
@@ -811,9 +735,6 @@ static void gfx_xbox_rapi_on_resize(void) {
 }
 
 static void gfx_xbox_rapi_start_frame(void) {
-    g_xbox_perf_draw_finish_ms = 0;
-    g_xbox_perf_draw_finish_count = 0;
-
     uint32_t *cmd = pb_begin();
     cmd = xgu_clear_surface(cmd, XGU_CLEAR_Z | XGU_CLEAR_STENCIL | XGU_CLEAR_COLOR);
     pb_end(cmd);

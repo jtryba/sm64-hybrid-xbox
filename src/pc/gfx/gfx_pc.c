@@ -4,9 +4,6 @@
 #include <string.h>
 #include <stdbool.h>
 #include <assert.h>
-#ifdef TARGET_XBOX
-#include <stdio.h>
-#endif
 
 #ifndef _LANGUAGE_C
 #define _LANGUAGE_C
@@ -72,91 +69,7 @@ static struct {
     uint32_t pool_pos;
 } gfx_texture_cache;
 
-#ifdef TARGET_XBOX
-/*
- * R9 logical texture-cache rollover validation.
- *
- * This trace is intentionally low-volume: it writes only when a cache
- * generation rolls over or if a stale/cross-bucket head invariant is seen.
- */
-static FILE *r9_texcache_trace_fp;
-static uint32_t r9_texcache_trace_seq;
-static uint32_t r9_texcache_generation;
 
-static size_t r9_texcache_hash(const uint8_t *addr) {
-    size_t hash = (uintptr_t)addr;
-    return (hash >> 5) & 0x3ff;
-}
-
-static uint32_t r9_texcache_nonnull_bucket_count(void) {
-    uint32_t count = 0;
-    for (size_t i = 0; i < 1024; ++i) {
-        if (gfx_texture_cache.hashmap[i] != NULL) {
-            ++count;
-        }
-    }
-    return count;
-}
-
-static int32_t r9_texcache_node_index(const struct TextureHashmapNode *node) {
-    if (node == NULL) {
-        return -1;
-    }
-
-    const uintptr_t addr = (uintptr_t)node;
-    const uintptr_t base = (uintptr_t)&gfx_texture_cache.pool[0];
-    const uintptr_t end = (uintptr_t)&gfx_texture_cache.pool[512];
-
-    if (addr < base || addr >= end) {
-        return -2;
-    }
-
-    return (int32_t)(node - gfx_texture_cache.pool);
-}
-
-static void r9_texcache_trace_open(void) {
-    if (r9_texcache_trace_fp != NULL) {
-        return;
-    }
-
-    r9_texcache_trace_fp = fopen("D:\\sm64_texcache_r9.csv", "w");
-    if (r9_texcache_trace_fp != NULL) {
-        fprintf(r9_texcache_trace_fp,
-                "seq,event,generation,pool_pos,bucket,nonnull_before,"
-                "nonnull_after,head_index,head_key_bucket\n");
-        fflush(r9_texcache_trace_fp);
-    }
-}
-
-static void r9_texcache_trace(const char *event, size_t bucket,
-                              uint32_t nonnull_before,
-                              uint32_t nonnull_after,
-                              const struct TextureHashmapNode *head) {
-    r9_texcache_trace_open();
-    if (r9_texcache_trace_fp == NULL) {
-        return;
-    }
-
-    const int32_t head_index = r9_texcache_node_index(head);
-    const int32_t head_key_bucket =
-        head != NULL && head_index >= 0
-            ? (int32_t)r9_texcache_hash(head->texture_addr)
-            : -1;
-
-    fprintf(r9_texcache_trace_fp,
-            "%lu,%s,%lu,%lu,%lu,%lu,%lu,%ld,%ld\n",
-            (unsigned long)r9_texcache_trace_seq++,
-            event,
-            (unsigned long)r9_texcache_generation,
-            (unsigned long)gfx_texture_cache.pool_pos,
-            (unsigned long)bucket,
-            (unsigned long)nonnull_before,
-            (unsigned long)nonnull_after,
-            (long)head_index,
-            (long)head_key_bucket);
-    fflush(r9_texcache_trace_fp);
-}
-#endif
 
 #ifdef ENABLE_SHINDOU_TITLE_EASTER_EGG
 static const uint8_t *gfx_dynamic_texture_addr;
@@ -345,21 +258,6 @@ static bool gfx_texture_cache_lookup(int tile, struct TextureHashmapNode **n, co
     hash = (hash >> 5) & 0x3ff;
     struct TextureHashmapNode **node = &gfx_texture_cache.hashmap[hash];
 
-#ifdef TARGET_XBOX
-    if (*node != NULL) {
-        const int32_t head_index = r9_texcache_node_index(*node);
-        if (head_index < 0 || head_index >= (int32_t)gfx_texture_cache.pool_pos) {
-            r9_texcache_trace("STALE_HEAD", hash,
-                              r9_texcache_nonnull_bucket_count(),
-                              r9_texcache_nonnull_bucket_count(), *node);
-        } else if (r9_texcache_hash((*node)->texture_addr) != hash) {
-            r9_texcache_trace("CROSS_BUCKET_HEAD", hash,
-                              r9_texcache_nonnull_bucket_count(),
-                              r9_texcache_nonnull_bucket_count(), *node);
-        }
-    }
-#endif
-
     while (*node != NULL && *node - gfx_texture_cache.pool < (int)gfx_texture_cache.pool_pos) {
         if ((*node)->texture_addr == orig_addr && (*node)->fmt == fmt && (*node)->siz == siz) {
             gfx_rapi->select_texture(tile, (*node)->texture_id);
@@ -376,10 +274,6 @@ static bool gfx_texture_cache_lookup(int tile, struct TextureHashmapNode **n, co
     }
 
     if (gfx_texture_cache.pool_pos == sizeof(gfx_texture_cache.pool) / sizeof(struct TextureHashmapNode)) {
-#ifdef TARGET_XBOX
-        const uint32_t nonnull_before = r9_texcache_nonnull_bucket_count();
-#endif
-
         /*
          * R9: a logical-cache generation is not invalid until every bucket
          * head is detached from the old pool contents. R7 reset pool_pos but
@@ -397,12 +291,6 @@ static bool gfx_texture_cache_lookup(int tile, struct TextureHashmapNode **n, co
          */
         rdp.textures_changed[0] = true;
         rdp.textures_changed[1] = true;
-
-#ifdef TARGET_XBOX
-        ++r9_texcache_generation;
-        r9_texcache_trace("WRAP_CLEAR", hash, nonnull_before,
-                          r9_texcache_nonnull_bucket_count(), NULL);
-#endif
 
         node = &gfx_texture_cache.hashmap[hash];
     }
