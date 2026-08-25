@@ -32,6 +32,7 @@
 static SDL_GameController *sXboxController = NULL;
 static SDL_JoystickID sXboxControllerInstance = -1;
 static bool sXboxControllerInitialized = false;
+static bool sXboxControllerEverConnected = false;
 
 #ifdef ENABLE_RUMBLE
 #define XBOX_RUMBLE_ON_STRENGTH 0xFFFF
@@ -146,6 +147,8 @@ static void controller_xbox_open_first(void) {
                 joystick
             );
 
+        sXboxControllerEverConnected = true;
+
         return;
     }
 }
@@ -207,6 +210,10 @@ static void controller_xbox_read(
         sXboxController;
 
     if (xpad == NULL) {
+        if (sXboxControllerEverConnected) {
+            pad->errnum = CONT_NO_RESPONSE_ERROR;
+        }
+
         return;
     }
 

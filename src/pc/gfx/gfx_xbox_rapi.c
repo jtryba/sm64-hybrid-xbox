@@ -382,7 +382,7 @@ static void draw_update_state(void) {
             rst.zmask_changed = false;
         }
         if (rst.decal_changed) {
-            cmd = draw_set_polygon_offset(cmd, rst.decal, -2.f, -2.f);
+            cmd = draw_set_polygon_offset(cmd, rst.decal, -2.f, -4.f);
             rst.decal_changed = false;
         }
         pb_end(cmd);

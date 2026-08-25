@@ -203,9 +203,17 @@ u16 level_control_timer(s32 timerOp) {
 u32 pressed_pause(void) {
     u32 val4 = get_dialog_id() >= 0;
     u32 intangible = (gMarioState->action & ACT_FLAG_INTANGIBLE) != 0;
+    u32 pauseInput = gPlayer1Controller->buttonPressed & START_BUTTON;
+
+#if defined(TARGET_XBOX)
+    if (gCurrDemoInput == NULL && gPlayer1Controller->controllerData != NULL
+        && gPlayer1Controller->controllerData->errnum == CONT_NO_RESPONSE_ERROR) {
+        pauseInput = TRUE;
+    }
+#endif
 
     if (!intangible && !val4 && !gWarpTransition.isActive && sDelayedWarpOp == WARP_OP_NONE
-        && (gPlayer1Controller->buttonPressed & START_BUTTON)) {
+        && pauseInput) {
         return TRUE;
     }
 

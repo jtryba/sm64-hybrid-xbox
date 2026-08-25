@@ -4,6 +4,7 @@
 #include "game/memory.h"
 #include "game/segment2.h"
 #include "game/segment7.h"
+#include "gfx_dimensions.h"
 #include "intro_geo.h"
 #include "sm64.h"
 #include "textures.h"
@@ -159,7 +160,7 @@ Gfx *geo_fade_transition(s32 sp40, struct GraphNode *sp44, UNUSED void *context)
     return displayList;
 }
 
-Gfx *intro_backdrop_one_image(s32 index, s8 *backgroundTable) {
+static Gfx *intro_backdrop_one_image_at(f32 x, f32 y, s8 backgroundType) {
     Mtx *mtx;                         // sp5c
     Gfx *displayList;                 // sp58
     Gfx *displayListIter;             // sp54
@@ -168,8 +169,8 @@ Gfx *intro_backdrop_one_image(s32 index, s8 *backgroundTable) {
     mtx = alloc_display_list(sizeof(*mtx));
     displayList = alloc_display_list(36 * sizeof(*displayList));
     displayListIter = displayList;
-    vIntroBgTable = segmented_to_virtual(introBackgroundTextureType[backgroundTable[index]]);
-    guTranslate(mtx, introBackgroundOffsetX[index], introBackgroundOffsetY[index], 0.0f);
+    vIntroBgTable = segmented_to_virtual(introBackgroundTextureType[backgroundType]);
+    guTranslate(mtx, x, y, 0.0f);
     gSPMatrix(displayListIter++, mtx, G_MTX_MODELVIEW | G_MTX_LOAD | G_MTX_PUSH);
     gSPDisplayList(displayListIter++, &title_screen_bg_dl_0A000118);
     for (i = 0; i < 4; ++i) {
@@ -182,6 +183,64 @@ Gfx *intro_backdrop_one_image(s32 index, s8 *backgroundTable) {
     return displayList;
 }
 
+Gfx *intro_backdrop_one_image(s32 index, s8 *backgroundTable) {
+    return intro_backdrop_one_image_at(introBackgroundOffsetX[index], introBackgroundOffsetY[index],
+                                       backgroundTable[index]);
+}
+
+#ifdef WIDESCREEN
+
+static s32 intro_backdrop_left_extra_columns(void) {
+    f32 leftEdge = GFX_DIMENSIONS_FROM_LEFT_EDGE(0);
+
+    if (leftEdge >= 0.0f) {
+        return 0;
+    }
+
+    return (s32) ceilf(-leftEdge / 80.0f);
+}
+
+static s32 intro_backdrop_right_extra_columns(void) {
+    f32 rightEdge = GFX_DIMENSIONS_FROM_RIGHT_EDGE(0);
+
+    if (rightEdge <= SCREEN_WIDTH) {
+        return 0;
+    }
+
+    return (s32) ceilf((rightEdge - SCREEN_WIDTH) / 80.0f);
+}
+
+static void intro_backdrop_append_widescreen_sides(Gfx **displayListIter, s8 *backgroundTable,
+                                                   s32 leftColumns, s32 rightColumns) {
+    s32 column;
+    s32 row;
+
+    for (column = 1; column <= leftColumns; ++column) {
+        f32 x = -80.0f * column;
+
+        for (row = 0; row < 3; ++row) {
+            s32 edgeIndex = row * 4;
+            gSPDisplayList((*displayListIter)++,
+                           intro_backdrop_one_image_at(x, introBackgroundOffsetY[edgeIndex],
+                                                       backgroundTable[edgeIndex]));
+        }
+    }
+
+    for (column = 0; column < rightColumns; ++column) {
+        f32 x = SCREEN_WIDTH + 80.0f * column;
+
+        for (row = 0; row < 3; ++row) {
+            s32 edgeIndex = row * 4 + 3;
+            gSPDisplayList((*displayListIter)++,
+                           intro_backdrop_one_image_at(x, introBackgroundOffsetY[edgeIndex],
+                                                       backgroundTable[edgeIndex]));
+        }
+    }
+}
+
+#endif
+
+
 Gfx *geo_intro_backdrop(s32 sp48, struct GraphNode *sp4c, UNUSED void *context) {
     struct GraphNodeMore *graphNode; // sp44
     s32 index;                       // sp40
@@ -189,13 +248,23 @@ Gfx *geo_intro_backdrop(s32 sp48, struct GraphNode *sp4c, UNUSED void *context) 
     Gfx *displayList;                // sp38
     Gfx *displayListIter;            // sp34
     s32 i;                           // sp30
+#ifdef WIDESCREEN
+    s32 leftColumns;
+    s32 rightColumns;
+#endif
     graphNode = (struct GraphNodeMore *) sp4c;
     index = graphNode->unk18 & 0xff; // TODO: word at offset 0x18 of struct GraphNode
     backgroundTable = introBackgroundTables[index];
     displayList = NULL;
     displayListIter = NULL;
     if (sp48 == 1) {
+#ifdef WIDESCREEN
+        leftColumns = intro_backdrop_left_extra_columns();
+        rightColumns = intro_backdrop_right_extra_columns();
+        displayList = alloc_display_list((16 + (leftColumns + rightColumns) * 3) * sizeof(*displayList));
+#else
         displayList = alloc_display_list(16 * sizeof(*displayList));
+#endif
         displayListIter = displayList;
         graphNode->node.flags = (graphNode->node.flags & 0xFF) | 0x100;
         gSPDisplayList(displayListIter++, &dl_proj_mtx_fullscreen);
@@ -203,6 +272,9 @@ Gfx *geo_intro_backdrop(s32 sp48, struct GraphNode *sp4c, UNUSED void *context) 
         for (i = 0; i < 12; ++i) {
             gSPDisplayList(displayListIter++, intro_backdrop_one_image(i, backgroundTable));
         }
+#ifdef WIDESCREEN
+        intro_backdrop_append_widescreen_sides(&displayListIter, backgroundTable, leftColumns, rightColumns);
+#endif
         gSPDisplayList(displayListIter++, &title_screen_bg_dl_0A000190);
         gSPEndDisplayList(displayListIter);
     }
@@ -215,6 +287,10 @@ Gfx *geo_game_over_tile(s32 sp40, struct GraphNode *sp44, UNUSED void *context) 
     Gfx *displayListIter;        // sp34
     s32 j;                       // sp30
     s32 i;                       // sp2c
+#ifdef WIDESCREEN
+    s32 leftColumns;
+    s32 rightColumns;
+#endif
     graphNode = sp44;
     displayList = NULL;
     displayListIter = NULL;
@@ -225,7 +301,13 @@ Gfx *geo_game_over_tile(s32 sp40, struct GraphNode *sp44, UNUSED void *context) 
             gameOverBackgroundTable[i] = INTRO_BACKGROUND_GAME_OVER;
         }
     } else {
+#ifdef WIDESCREEN
+        leftColumns = intro_backdrop_left_extra_columns();
+        rightColumns = intro_backdrop_right_extra_columns();
+        displayList = alloc_display_list((16 + (leftColumns + rightColumns) * 3) * sizeof(*displayList));
+#else
         displayList = alloc_display_list(16 * sizeof(*displayList));
+#endif
         displayListIter = displayList;
         if (gGameOverTableIndex == -2) {
             if (gGameOverFrameCounter == 180) {
@@ -249,6 +331,9 @@ Gfx *geo_game_over_tile(s32 sp40, struct GraphNode *sp44, UNUSED void *context) 
         for (j = 0; j < (s32) sizeof(gameOverBackgroundTable); ++j) {
             gSPDisplayList(displayListIter++, intro_backdrop_one_image(j, gameOverBackgroundTable));
         }
+#ifdef WIDESCREEN
+        intro_backdrop_append_widescreen_sides(&displayListIter, gameOverBackgroundTable, leftColumns, rightColumns);
+#endif
         gSPDisplayList(displayListIter++, &title_screen_bg_dl_0A000190);
         gSPEndDisplayList(displayListIter);
     }
@@ -279,15 +364,56 @@ static s8 sShindouFaceToggleOrder[] = {
 
 static s8 sShindouFaceCounter;
 
-static void intro_gen_shindou_face_texrect(Gfx **displayListIter) {
+static s32 intro_shindou_face_left_extra_columns(void) {
+#ifdef WIDESCREEN
+    f32 leftEdge = GFX_DIMENSIONS_FROM_LEFT_EDGE(0);
+
+    if (leftEdge < 0.0f) {
+        return (s32) ceilf(-leftEdge / 40.0f);
+    }
+#endif
+    return 0;
+}
+
+static s32 intro_shindou_face_right_extra_columns(void) {
+#ifdef WIDESCREEN
+    f32 rightEdge = GFX_DIMENSIONS_FROM_RIGHT_EDGE(0);
+
+    if (rightEdge > SCREEN_WIDTH) {
+        return (s32) ceilf((rightEdge - SCREEN_WIDTH) / 40.0f);
+    }
+#endif
+    return 0;
+}
+
+static void intro_gen_shindou_face_texrect(Gfx **displayListIter, s32 leftColumns, s32 rightColumns) {
+    s32 column;
     s32 x;
     s32 y;
 
     for (y = 0; y < 6; ++y) {
+        for (column = 1; column <= leftColumns; ++column) {
+            if (sShindouFaceVisible[y * 8] != 0) {
+                x = -40 * column;
+                gSPTextureRectangle((*displayListIter)++, x << 2, (y * 40) << 2,
+                                    (x + 39) << 2, (y * 40 + 39) << 2, 0,
+                                    0, 0, 4 << 10, 1 << 10);
+            }
+        }
+
         for (x = 0; x < 8; ++x) {
             if (sShindouFaceVisible[y * 8 + x] != 0) {
                 gSPTextureRectangle((*displayListIter)++, (x * 40) << 2, (y * 40) << 2,
                                     (x * 40 + 39) << 2, (y * 40 + 39) << 2, 0,
+                                    0, 0, 4 << 10, 1 << 10);
+            }
+        }
+
+        for (column = 0; column < rightColumns; ++column) {
+            if (sShindouFaceVisible[y * 8 + 7] != 0) {
+                x = SCREEN_WIDTH + 40 * column;
+                gSPTextureRectangle((*displayListIter)++, x << 2, (y * 40) << 2,
+                                    (x + 39) << 2, (y * 40 + 39) << 2, 0,
                                     0, 0, 4 << 10, 1 << 10);
             }
         }
@@ -297,8 +423,13 @@ static void intro_gen_shindou_face_texrect(Gfx **displayListIter) {
 static Gfx *intro_draw_shindou_face(u16 *image, s32 imageW, s32 imageH) {
     Gfx *displayList;
     Gfx *displayListIter;
+    s32 leftColumns;
+    s32 rightColumns;
 
-    displayList = alloc_display_list(136 * sizeof(*displayList));
+    leftColumns = intro_shindou_face_left_extra_columns();
+    rightColumns = intro_shindou_face_right_extra_columns();
+
+    displayList = alloc_display_list((136 + (leftColumns + rightColumns) * 18) * sizeof(*displayList));
     if (displayList == NULL) {
         return NULL;
     }
@@ -309,7 +440,7 @@ static Gfx *intro_draw_shindou_face(u16 *image, s32 imageW, s32 imageH) {
     gDPLoadTextureBlock(displayListIter++, image, G_IM_FMT_RGBA, G_IM_SIZ_16b, imageW, imageH, 0,
                         G_TX_CLAMP | G_TX_NOMIRROR, G_TX_CLAMP | G_TX_NOMIRROR,
                         6, 6, G_TX_NOLOD, G_TX_NOLOD);
-    intro_gen_shindou_face_texrect(&displayListIter);
+    intro_gen_shindou_face_texrect(&displayListIter, leftColumns, rightColumns);
     gSPDisplayList(displayListIter++, title_screen_bg_shindou_face_end_dl);
     gSPEndDisplayList(displayListIter);
 
