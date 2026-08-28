@@ -2,6 +2,7 @@
 
 #include "engine/graph_node.h"
 #include "game/memory.h"
+#include "game/print.h"
 #include "game/segment2.h"
 #include "game/segment7.h"
 #include "gfx_dimensions.h"
@@ -121,6 +122,10 @@ Gfx *geo_title_screen(s32 sp50, struct GraphNode *sp54, UNUSED void *context) {
         gSPDisplayList(displayListIter++, &intro_seg7_dl_0700B3A0);
         gSPPopMatrix(displayListIter++, G_MTX_MODELVIEW);
         gSPEndDisplayList(displayListIter);
+        if (gTitleZoomCounter >= INTRO_STEPS_ZOOM_IN
+            && gTitleZoomCounter < INTRO_STEPS_HOLD_1) {
+            print_text(282, 149, "*");
+        }
         gTitleZoomCounter++;
     }
     return displayList;
