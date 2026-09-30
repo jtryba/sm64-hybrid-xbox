@@ -9,6 +9,7 @@
 
 #include <hal/xbox.h>
 #include <SDL.h>
+#include <SDL_raphnet.h>
 
 #include <ultra64.h>
 
@@ -41,39 +42,181 @@ static bool sXboxControllerEverConnected = false;
 #ifdef ENABLE_RUMBLE
 #define XBOX_RUMBLE_ON_STRENGTH 0xFFFF
 #define XBOX_RUMBLE_REFRESH_MS 100
+#define RAPHNET_N64_CHANNEL 0
+
+static bool sRaphnetRumbleInitialized = false;
+static bool sRaphnetRumbleEnabled = false;
+
+static Uint8 raphnet_n64_accessory_crc(const Uint8 *data) {
+    Uint8 crc = 0;
+
+    for (int i = 0; i < 33; ++i) {
+        const Uint8 value = i < 32 ? data[i] : 0;
+
+        for (int bit = 0; bit < 8; ++bit) {
+            const Uint8 carry = crc & 0x80;
+            crc = (Uint8) ((crc << 1) | ((value >> (7 - bit)) & 1));
+
+            if (carry) {
+                crc ^= 0x85;
+            }
+        }
+    }
+
+    return crc;
+}
+
+static bool raphnet_n64_pak_write(
+    Uint8 address_high,
+    Uint8 address_low,
+    Uint8 fill
+) {
+    Uint8 command[35];
+    Uint8 response[1];
+    Uint8 payload[32];
+
+    command[0] = 0x03;
+    command[1] = address_high;
+    command[2] = address_low;
+    memset(command + 3, fill, 32);
+    memset(payload, fill, sizeof(payload));
+
+    const int response_length = SDL_RaphnetN64RawSI(
+        sRaphnetController,
+        RAPHNET_N64_CHANNEL,
+        command,
+        sizeof(command),
+        response,
+        sizeof(response)
+    );
+
+    return response_length == 1 &&
+        response[0] == raphnet_n64_accessory_crc(payload);
+}
+
+static bool raphnet_n64_rumble_init(void) {
+    Uint8 identify_command = 0x00;
+    Uint8 identify_response[3];
+    Uint8 signature_command[3] = { 0x02, 0x80, 0x01 };
+    Uint8 signature_response[33];
+
+    if (sRaphnetController == NULL) {
+        return false;
+    }
+
+    int response_length = SDL_RaphnetN64RawSI(
+        sRaphnetController,
+        RAPHNET_N64_CHANNEL,
+        &identify_command,
+        sizeof(identify_command),
+        identify_response,
+        sizeof(identify_response)
+    );
+
+    if (
+        response_length != 3 ||
+        identify_response[0] != 0x05 ||
+        identify_response[1] != 0x00 ||
+        (identify_response[2] & 0x01) == 0
+    ) {
+        return false;
+    }
+
+    response_length = SDL_RaphnetN64RawSI(
+        sRaphnetController,
+        RAPHNET_N64_CHANNEL,
+        signature_command,
+        sizeof(signature_command),
+        signature_response,
+        sizeof(signature_response)
+    );
+
+    if (
+        response_length != 33 ||
+        signature_response[32] != raphnet_n64_accessory_crc(signature_response)
+    ) {
+        return false;
+    }
+
+    for (int i = 0; i < 32; ++i) {
+        if (signature_response[i] != 0x80) {
+            return false;
+        }
+    }
+
+    if (!raphnet_n64_pak_write(0x80, 0x01, 0x80)) {
+        return false;
+    }
+
+    sRaphnetRumbleInitialized = true;
+    return true;
+}
+
+static void raphnet_n64_set_rumble(bool enabled) {
+    if (sRaphnetController == NULL) {
+        return;
+    }
+
+    if (enabled && !sRaphnetRumbleInitialized) {
+        if (!raphnet_n64_rumble_init()) {
+            return;
+        }
+    }
+
+    if (!sRaphnetRumbleInitialized || enabled == sRaphnetRumbleEnabled) {
+        return;
+    }
+
+    if (raphnet_n64_pak_write(0xC0, 0x1B, enabled ? 0x01 : 0x00)) {
+        sRaphnetRumbleEnabled = enabled;
+    }
+}
 
 void controller_xbox_set_rumble(
     u8 low_frequency_enabled,
     u8 high_frequency_enabled
 ) {
-    if (
-        !sXboxControllerInitialized ||
-        sXboxController == NULL
-    ) {
+    if (!sXboxControllerInitialized) {
         return;
     }
 
-    const Uint16 low_strength =
-        low_frequency_enabled ? XBOX_RUMBLE_ON_STRENGTH : 0;
+    if (sRaphnetController != NULL) {
+        /* A real N64 Rumble Pak is binary. Preserve the original on/off pulse
+         * timing and issue the native accessory command without translating
+         * it through Xbox low/high motor strengths or an SDL duration. */
+        raphnet_n64_set_rumble(
+            low_frequency_enabled || high_frequency_enabled
+        );
+        return;
+    }
 
-    const Uint16 high_strength =
-        high_frequency_enabled ? XBOX_RUMBLE_ON_STRENGTH : 0;
+    if (sXboxController != NULL) {
+        const Uint16 low_strength =
+            low_frequency_enabled ? XBOX_RUMBLE_ON_STRENGTH : 0;
 
-    const Uint32 duration =
-        (low_frequency_enabled || high_frequency_enabled)
-            ? XBOX_RUMBLE_REFRESH_MS
-            : 0;
+        const Uint16 high_strength =
+            high_frequency_enabled ? XBOX_RUMBLE_ON_STRENGTH : 0;
 
-    SDL_GameControllerRumble(
-        sXboxController,
-        low_strength,
-        high_strength,
-        duration
-    );
+        const Uint32 duration =
+            (low_frequency_enabled || high_frequency_enabled)
+                ? XBOX_RUMBLE_REFRESH_MS
+                : 0;
+
+        SDL_GameControllerRumble(
+            sXboxController,
+            low_strength,
+            high_strength,
+            duration
+        );
+    }
 }
 
 static void controller_xbox_shutdown(void) {
     controller_xbox_set_rumble(FALSE, FALSE);
+
+    if (sRaphnetRumbleEnabled) {
+        controller_xbox_set_rumble(FALSE, FALSE);
+    }
 }
 #endif
 
@@ -98,10 +241,15 @@ static inline bool xbox_trigger_pressed(
 }
 
 static void controller_xbox_close_current(void) {
-    if (sXboxController != NULL) {
 #ifdef ENABLE_RUMBLE
+    controller_xbox_set_rumble(FALSE, FALSE);
+
+    if (sRaphnetRumbleEnabled) {
         controller_xbox_set_rumble(FALSE, FALSE);
+    }
 #endif
+
+    if (sXboxController != NULL) {
         SDL_GameControllerClose(
             sXboxController
         );
@@ -112,6 +260,10 @@ static void controller_xbox_close_current(void) {
     if (sRaphnetController != NULL) {
         SDL_JoystickClose(sRaphnetController);
         sRaphnetController = NULL;
+#ifdef ENABLE_RUMBLE
+        sRaphnetRumbleInitialized = false;
+        sRaphnetRumbleEnabled = false;
+#endif
     }
 
     sXboxControllerInstance = -1;
