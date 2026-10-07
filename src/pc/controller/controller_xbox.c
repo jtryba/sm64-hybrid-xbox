@@ -211,13 +211,6 @@ void controller_xbox_set_rumble(
     }
 }
 
-static void controller_xbox_shutdown(void) {
-    controller_xbox_set_rumble(FALSE, FALSE);
-
-    if (sRaphnetRumbleEnabled) {
-        controller_xbox_set_rumble(FALSE, FALSE);
-    }
-}
 #endif
 
 static inline bool xbox_button_pressed(
@@ -267,6 +260,14 @@ static void controller_xbox_close_current(void) {
     }
 
     sXboxControllerInstance = -1;
+}
+
+static void controller_xbox_shutdown(void) {
+    controller_xbox_close_current();
+    if (sXboxControllerInitialized) {
+        SDL_QuitSubSystem(SDL_INIT_GAMECONTROLLER);
+        sXboxControllerInitialized = false;
+    }
 }
 
 static bool controller_xbox_has_current(void) {
@@ -436,9 +437,7 @@ static void controller_xbox_init(void) {
 
     sXboxControllerInitialized = true;
 
-#ifdef ENABLE_RUMBLE
     atexit(controller_xbox_shutdown);
-#endif
 
     controller_xbox_open_first();
 }
@@ -500,9 +499,9 @@ static void controller_xbox_read(
         xpad_ltrig &&
         xpad_rtrig
     ) {
-#ifdef ENABLE_RUMBLE
-        controller_xbox_set_rumble(FALSE, FALSE);
-#endif
+        /* This reboot is terminal; explicitly release hybrid controller
+         * state and stop native/XID rumble before handing control back. */
+        controller_xbox_shutdown();
         XReboot();
     }
 
