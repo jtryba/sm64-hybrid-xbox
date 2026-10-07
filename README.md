@@ -1,3 +1,15 @@
+# SM64 Hybrid Xbox
+
+> **Hybrid Shindou/Raphnet lineage for the original Xbox.**
+>
+> This repository is the independent `SM64-HYBRID-XBOX` project. It contains the hybrid Shindou-rumble path, Raphnet v3 N64-controller and Rumble Pak support, and the hardware-qualified initialization/cleanup work.
+>
+> The enhanced-vanilla / clean-upstream-PR lineage is maintained separately in [`jtryba/sm64-port`](https://github.com/jtryba/sm64-port). Build, runtime, hardware, and publication acceptance do not transfer between these repositories.
+>
+> **Canonical mirrors:** [GitHub](https://github.com/jtryba/sm64-hybrid-xbox) · [public Git clone](https://git.jtryba.com/public/sm64-hybrid-xbox.git) · [GitWeb](https://git.jtryba.com/?p=sm64-hybrid-xbox;a=summary)
+
+---
+
 # Super Mario 64 Port
 
 - This repo contains a full decompilation of Super Mario 64 (J), (U), and (E) with minor exceptions in the audio subsystem.
